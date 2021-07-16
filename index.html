@@ -1,0 +1,242 @@
+<html>
+<head>
+<title>2D Physics Demo</title>
+</head>
+</body>
+<canvas id = "canvas" style = "border: 3px solid; width: 100%; height: 100%;">
+<script>
+var canvas_dom = document.getElementById("canvas");
+var context = canvas_dom.getContext("2d");
+context.canvas.width = window.innerWidth;
+context.canvas.height = window.innerHeight;
+var circles = [];
+var polygons = [];
+var col = false;
+
+function create_polygons(){
+	for(i = 0; i < 40; i++){
+		polygons[i] = {cx: Math.random()*canvas_dom.width, cy: Math.random()*canvas_dom.height, points: [{x: 15, y: 15}, {x: -15, y: 15}, {x: -15, y: -15}, {x: 15, y: -15}], rotation: Math.random()*2*Math.PI, inv_mass: 1, inv_inertia: 1/500, vel: {x: Math.random()*0.25, y: Math.random()*0.25}, w: Math.random()*0.05 - 0.025};
+	}
+}
+
+function rotate_point(p, angle){
+	var output = {};
+
+	output.x = p.x*Math.cos(angle) - p.y*Math.sin(angle);
+	output.y = p.x*Math.sin(angle) + p.y*Math.cos(angle);
+
+	return output;
+}
+
+function polygon_get_collision(poly0, poly1){
+	var i, j;
+	var a, b, d, k;
+	var poly0_points = [];
+	var poly1_points = [];
+	var point = {};
+	var norm = {};
+	var line = {};
+	var proj = {};
+	var rej = {};
+	var depth;
+	var min_depth;
+	var best_index;
+	var best_norm = {};
+	var do_negate;
+	var p0_vel = {};
+	var p1_vel = {};
+	var norm_size;
+
+	for(i = 0; i < poly0.points.length; i++){
+		poly0_points[i] = poly0.points[i];
+		poly0_points[i] = rotate_point(poly0_points[i], poly0.rotation);
+		poly0_points[i].x += poly0.cx;
+		poly0_points[i].y += poly0.cy;
+	}
+	for(i = 0; i < poly1.points.length; i++){
+		poly1_points[i] = poly1.points[i];
+		poly1_points[i] = rotate_point(poly1_points[i], poly1.rotation);
+		poly1_points[i].x += poly1.cx;
+		poly1_points[i].y += poly1.cy;
+	}
+
+	for(i = 0; i < poly0_points.length; i++){
+		min_depth = 100000;
+		for(j = 0; j < poly1_points.length; j++){
+			norm.x = poly1_points[(j + 1)%poly1_points.length].y - poly1_points[j].y;
+			norm.y = poly1_points[j].x - poly1_points[(j + 1)%poly1_points.length].x;
+			a = (poly1.cx - poly1_points[j].x)*norm.x + (poly1.cy - poly1_points[j].y)*norm.y;
+			b = (poly0_points[i].x - poly1_points[j].x)*norm.x + (poly0_points[i].y - poly1_points[j].y)*norm.y;
+			if((a < 0) != (b < 0)){
+				break;
+			}
+			depth = Math.sqrt(b*b/(norm.x*norm.x + norm.y*norm.y));
+			if(depth < min_depth){
+				min_depth = depth;
+				best_index = j;
+				do_negate = (b > 0);
+			}
+		}
+		if(j == poly1_points.length){
+			p0_vel.x = poly0.vel.x + (poly0_points[i].y - poly0.cy)*poly0.w;
+			p0_vel.y = poly0.vel.y + (poly0.cx - poly0_points[i].x)*poly0.w;
+			p1_vel.x = poly1.vel.x + (poly0_points[i].y - poly1.cy)*poly1.w;
+			p1_vel.y = poly1.vel.y + (poly1.cx - poly0_points[i].x)*poly1.w;
+			best_norm.x = poly1_points[(best_index + 1)%poly1_points.length].y - poly1_points[best_index].y;
+			best_norm.y = poly1_points[best_index].x - poly1_points[(best_index + 1)%poly1_points.length].x;
+			if(do_negate){
+				best_norm.x = -best_norm.x;
+				best_norm.y = -best_norm.y;
+			}
+			norm_size = Math.sqrt(best_norm.x*best_norm.x + best_norm.y*best_norm.y);
+			//if(p0_vel.x*best_norm.x + p0_vel.y*best_norm.y < 0){
+				return {collision: true, normal: best_norm, depth: min_depth, point: poly0_points[i], p0_vel: p0_vel, p1_vel: p1_vel};
+			//}
+		}
+	}
+	return {collision: false};
+}
+
+function get_collision(circle0, circle1){
+	var squared_radius_dist;
+	var squared_dist;
+	var output = {};
+
+	squared_radius_dist = (circle0.radius + circle1.radius)*(circle0.radius + circle1.radius);
+	squared_dist = (circle0.cx - circle1.cx)*(circle0.cx - circle1.cx) + (circle0.cy - circle1.cy)*(circle0.cy - circle1.cy);
+
+	if(squared_radius_dist < squared_dist || (circle0.cx - circle1.cx)*(circle0.vx - circle1.vx) + (circle0.cy - circle1.cy)*(circle0.vy - circle1.vy) > 0.0){
+		return {collision: false};
+	}
+
+	output.collision = true;
+	output.nx = circle0.cx - circle1.cx;
+	output.ny = circle0.cy - circle1.cy;
+	output.px = (circle0.cx*circle0.radius + circle1.cx*circle1.radius)/(circle0.radius + circle1.radius);
+	output.py = (circle0.cy*circle0.radius + circle1.cy*circle1.radius)/(circle0.radius + circle1.radius);
+
+	return output;
+}
+
+function handle_collision(poly0, poly1){
+	var collision_info;
+	var impulse;
+	var dot0;
+	var dot1;
+	var d;
+
+	collision_info = polygon_get_collision(poly0, poly1);
+	if(collision_info.collision){
+		context.fillStyle = "blue";
+		context.beginPath();
+		context.arc(collision_info.point.x, collision_info.point.y, 10, 0, 2*Math.PI);
+		context.fill();
+		context.strokeStyle = "red";
+		context.lineWidth = 5;
+		context.beginPath();
+		context.moveTo(collision_info.point.x, collision_info.point.y);
+		context.lineTo(collision_info.point.x + collision_info.normal.x, collision_info.point.y + collision_info.normal.y);
+		context.stroke();
+		context.fillStyle = "black";
+		dot0 = (collision_info.point.y - poly0.cy)*collision_info.normal.x + (poly0.cx - collision_info.point.x)*collision_info.normal.y;
+		dot1 = (collision_info.point.y - poly1.cy)*collision_info.normal.x + (poly1.cx - collision_info.point.x)*collision_info.normal.y;
+		impulse = -2.0*((collision_info.p0_vel.x - collision_info.p1_vel.x)*collision_info.normal.x + (collision_info.p0_vel.y - collision_info.p1_vel.y)*collision_info.normal.y)/((collision_info.normal.x*collision_info.normal.x + collision_info.normal.y*collision_info.normal.y)*(poly0.inv_mass + poly1.inv_mass) + dot0*dot0*poly0.inv_inertia + dot1*dot1*poly1.inv_inertia);
+		poly0.vel.x += impulse*collision_info.normal.x*poly0.inv_mass;
+		poly0.vel.y += impulse*collision_info.normal.y*poly0.inv_mass;
+		poly1.vel.x -= impulse*collision_info.normal.x*poly1.inv_mass;
+		poly1.vel.y -= impulse*collision_info.normal.y*poly1.inv_mass;
+
+		poly0.w += impulse*dot0*poly0.inv_inertia;
+		poly1.w -= impulse*dot1*poly1.inv_inertia;
+
+		d = Math.sqrt(collision_info.normal.x*collision_info.normal.x + collision_info.normal.y*collision_info.normal.y);
+		poly0.cx += collision_info.normal.x*collision_info.depth/d;
+		poly0.cy += collision_info.normal.y*collision_info.depth/d;
+		poly1.cx -= collision_info.normal.x*collision_info.depth/d;
+		poly1.cy -= collision_info.normal.y*collision_info.depth/d;
+	}
+}
+
+function do_physics(dt){
+	var i;
+	var j;
+
+	for(i = 0; i < polygons.length; i++){
+		for(j = 0; j < polygons.length; j++){
+			handle_collision(polygons[i], polygons[j]);
+		}
+	}
+
+	for(i = 0; i < polygons.length; i++){
+		if(polygons[i].cx < 0.0 && polygons[i].vel.x < 0.0){
+			polygons[i].vel.x *= -1.0;
+		}
+		if(polygons[i].cx > canvas.width && polygons[i].vel.x > 0.0){
+			polygons[i].vel.x *= -1.0;
+		}
+		if(polygons[i].cy < 0.0 && polygons[i].vel.y < 0.0){
+			polygons[i].vel.y *= -1.0;
+		}
+		if(polygons[i].cy > canvas.height && polygons[i].vel.y > 0.0){
+			polygons[i].vel.y *= -1.0;
+		}
+		polygons[i].cx += polygons[i].vel.x*dt;
+		polygons[i].cy += polygons[i].vel.y*dt;
+		polygons[i].rotation = (polygons[i].rotation - polygons[i].w*dt)%(2*Math.PI);
+
+		//polygons[i].vel.y += 0.01*dt;
+	}
+}
+
+function draw_circles(){
+	var i;
+
+	context.clearRect(0, 0, canvas_dom.width, canvas_dom.height);
+	for(i = 0; i < circles.length; i++){
+		context.beginPath();
+		context.arc(circles[i].cx, circles[i].cy, circles[i].radius, 0, 2*Math.PI);
+		context.fill();
+	}
+}
+
+function draw_polygons(){
+	var i;
+	var j;
+	var poly_x;
+	var poly_y;
+
+	for(i = 0; i < polygons.length; i++){
+		context.beginPath();
+		poly_x = polygons[i].points[0].x*Math.cos(polygons[i].rotation) - polygons[i].points[0].y*Math.sin(polygons[i].rotation) + polygons[i].cx;
+		poly_y = polygons[i].points[0].x*Math.sin(polygons[i].rotation) + polygons[i].points[0].y*Math.cos(polygons[i].rotation) + polygons[i].cy;
+		context.moveTo(poly_x, poly_y);
+		for(j = 0; j < polygons[i].points.length - 1; j++){
+			poly_x = polygons[i].points[j + 1].x*Math.cos(polygons[i].rotation) - polygons[i].points[j + 1].y*Math.sin(polygons[i].rotation) + polygons[i].cx;
+			poly_y = polygons[i].points[j + 1].x*Math.sin(polygons[i].rotation) + polygons[i].points[j + 1].y*Math.cos(polygons[i].rotation) + polygons[i].cy;
+			context.lineTo(poly_x, poly_y);
+		}
+		context.closePath();
+		context.fill();
+	}
+}
+
+function do_frame(){
+	if(!col){
+		context.fillStyle = "rgba(255, 255, 255, 0.2)";
+		context.fillRect(0, 0, canvas_dom.width, canvas_dom.height);
+		context.fillStyle = "black";
+	}
+	if(!col){
+		do_physics(2.0);
+	} else {
+		do_physics(0.0);
+	}
+	draw_polygons();
+}
+
+create_polygons();
+setInterval(do_frame, 20);
+
+</script>
+</body>
+</html>
